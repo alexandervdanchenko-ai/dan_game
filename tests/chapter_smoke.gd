@@ -52,5 +52,7 @@ func _exercise() -> void:
 	assert(game._save_slot(slot) and game._load_slot(slot))
 	game._begin_voyage()
 	assert(game.voyage == null and game.state.inventory["iron"] == 5)
+	assert(game.state.progression["xp"]["hero"] == 6)
+	assert(game.state.progression["xp"]["companion"] == 3)
 	print("PASS: ward, settlement, construction reload, shallows, boarding and persistent reward")
 	quit()

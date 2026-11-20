@@ -3,6 +3,7 @@ extends RefCounted
 
 const Items = preload("res://game/items/item_service.gd")
 const Settlements = preload("res://game/settlements/settlement_service.gd")
+const Progression = preload("res://game/party/progression.gd")
 const SAVE_VERSION: int = 1
 
 var current_location: String = "pier"
@@ -11,6 +12,7 @@ var flags: Dictionary = {}
 var party_positions: Array[Vector3] = []
 var inventory := Items.starter_pack()
 var settlement := Settlements.initial_state()
+var progression := Progression.initial_state()
 
 func to_payload() -> Dictionary:
 	var positions: Array = []
@@ -24,6 +26,7 @@ func to_payload() -> Dictionary:
 		"party_positions": positions,
 		"inventory": inventory.duplicate(true),
 		"settlement": settlement.duplicate(true),
+		"progression": progression.duplicate(true),
 	}
 
 func restore(payload: Dictionary) -> bool:
@@ -59,6 +62,10 @@ func restore(payload: Dictionary) -> bool:
 	var holding: Variant = payload.get("settlement", Settlements.initial_state())
 	if not Settlements.validate(holding):
 		return false
+	var progress: Variant = payload.get("progression", Progression.initial_state())
+	if not Progression.validate(progress):
+		return false
+	progression = progress.duplicate(true)
 	settlement = holding.duplicate(true)
 	inventory = bag.duplicate(true)
 	current_location = location_value

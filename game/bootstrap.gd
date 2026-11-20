@@ -8,6 +8,7 @@ const Items = preload("res://game/items/item_service.gd")
 const Quests = preload("res://game/quests/quest_service.gd")
 const Settlements = preload("res://game/settlements/settlement_service.gd")
 const Voyage = preload("res://game/travel/voyage_session.gd")
+const Progression = preload("res://game/party/progression.gd")
 const Party = preload("res://game/party/party_state.gd")
 const Combat = preload("res://game/combat/combat_session.gd")
 const MEMBER_IDS: Array[String] = ["hero", "companion"]
@@ -31,6 +32,7 @@ var shield_mesh: MeshInstance3D
 var round_time: float = 0.0
 var resolve_left: int = 4
 var use_spear: bool = false
+var companion_damage_bonus: int = 0
 var saves := Saves.new()
 var graph := Graph.new()
 var active_map: Node3D
@@ -40,6 +42,16 @@ var quests := Quests.new()
 var improvement_mesh: MeshInstance3D
 var message := Label.new()
 var combat_status := Label.new()
+var feedback_panel := PanelContainer.new()
+var menu_feedback := Label.new()
+var hud_battle_text: String:
+	set(value):
+		combat_status.text = value
+		_refresh_feedback()
+var hud_message_text: String:
+	set(value):
+		message.text = value
+		_refresh_feedback()
 var routes := Routes.new()
 var camera := Camera3D.new()
 var party: Array[MeshInstance3D] = []
@@ -72,7 +84,7 @@ func _ready() -> void:
 	panel.position = Vector2(24, 24)
 	var menu := VBoxContainer.new()
 	panel.add_child(menu)
-	for control: Control in [title_label, start_button, _button("Загрузить", _load_slot), quit_button]:
+	for control: Control in [title_label, start_button, _button("Загрузить", _load_slot), quit_button, menu_feedback]:
 		menu.add_child(control)
 	start_button.pressed.connect(_start_or_resume)
 	quit_button.text = "Выйти"
@@ -85,14 +97,7 @@ func _ready() -> void:
 	actions_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	actions_scroll.add_child(travel_panel)
 	travel_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	combat_status.position = Vector2(24, 390)
-	combat_status.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	ui.add_child(combat_status)
-	message.position = Vector2(24, 420)
-	message.size = Vector2(650, 100)
-	message.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	message.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	ui.add_child(message)
+	_build_feedback(ui)
 	_show_menu()
 
 func _box(at: Vector3, size: Vector3, color: Color) -> MeshInstance3D:
@@ -111,8 +116,9 @@ func _show_menu() -> void:
 	get_tree().paused = true
 	status_label.hide()
 	actions_scroll.hide()
-	combat_status.hide()
+	feedback_panel.hide()
 	panel.show()
+	menu_feedback.text = ""
 	title_label.text = "Пауза" if started else "Огни под Каневом"
 	start_button.text = "Продолжить" if started else "Начать"
 	start_button.grab_focus()
@@ -124,7 +130,7 @@ func _start_or_resume() -> void:
 	status_label.show()
 	_refresh_actions()
 	actions_scroll.show()
-	combat_status.show()
+	_refresh_feedback()
 
 func _input(event: InputEvent) -> void:
 	if combat != null and not get_tree().paused and event.is_action_pressed("ui_select"):
@@ -204,7 +210,7 @@ func _refresh_actions() -> void:
 		travel_panel.add_child(_button("Отступить к пристани", _order_retreat))
 		_update_combat_status()
 		return
-	combat_status.text = ""
+	hud_battle_text = ""
 	if voyage != null:
 		_add_river_actions()
 		return
@@ -221,6 +227,7 @@ func _refresh_actions() -> void:
 	_add_settlement_actions()
 	if state.current_location == "forest":
 		travel_panel.add_child(_button("Осмотреть зарубки на столбе", _read_forest_marks))
+	travel_panel.add_child(_button("Дружина и опыт", _show_progression))
 	travel_panel.add_child(_button("Снаряжение", _show_inventory))
 	if state.current_location == "pier":
 		travel_panel.add_child(_button("Оковать щит · 1 железо", _upgrade_shield))
@@ -289,12 +296,13 @@ func _travel(route_id: String) -> bool:
 	candidate.flags = state.flags.duplicate(true)
 	candidate.inventory = state.inventory.duplicate(true)
 	candidate.settlement = state.settlement.duplicate(true)
+	candidate.progression = state.progression.duplicate(true)
 	var next_map := _stage_map(candidate)
 	if next_map == null:
-		message.text = "Путь недоступен. Дружина осталась на прежнем месте."
+		hud_message_text = "Путь недоступен. Дружина осталась на прежнем месте."
 		return false
 	_activate_map(next_map, candidate)
-	message.text = ""
+	hud_message_text = ""
 	_refresh_actions()
 	return true
 
@@ -305,23 +313,23 @@ func _save_slot(slot_id: String = SLOT) -> bool:
 	for member in party:
 		state.party_positions.append(member.position)
 	var saved := saves.write(slot_id, state) == OK
-	message.text = "Игра сохранена." if saved else "Не удалось сохранить игру."
+	hud_message_text = "Игра сохранена." if saved else "Не удалось сохранить игру."
 	return saved
 
 func _load_slot(slot_id: String = SLOT) -> bool:
 	var candidate := saves.read(slot_id)
 	if candidate == null:
-		message.text = "Нет доступного сохранения."
+		_show_load_error("Нет доступного сохранения.")
 		return false
 	var next_map := _stage_map(candidate)
 	if next_map == null:
-		message.text = "Карта из сохранения недоступна."
+		_show_load_error("Карта из сохранения недоступна.")
 		return false
 	_clear_river_view()
 	voyage = null
 	_activate_map(next_map, candidate)
 	_start_or_resume()
-	message.text = "Игра загружена."
+	hud_message_text = "Игра загружена."
 	return true
 
 func _add_selection_actions() -> void:
@@ -359,13 +367,16 @@ func _start_fight(fighters: Array[String]) -> void:
 	var shop := Items.new(state.inventory)
 	var shield: Dictionary = state.inventory["shield"]
 	resolve_left = 3 + int(shop.stats("shield")["defense"]) if shield["condition"] > 0 else 3
+	var progress := Progression.new(state.progression)
+	resolve_left += progress.level("hero") - 1
+	companion_damage_bonus = int(progress.level("companion") >= 2)
 	if state.settlement["buildings"].has("guard"):
 		resolve_left += 1
 	use_spear = false
 	for index in orders.size():
 		orders[index] = PackedVector2Array()
 	enemy = _box(Vector3(ENEMY_CELL.x, 0.5, ENEMY_CELL.y), Vector3(0.75, 1, 0.75), Color("#aa5349"))
-	message.text = "Абордаж. Отдайте приказы и снимите паузу." if voyage != null else "Противник у переправы. Отдайте приказы и снимите паузу."
+	hud_message_text = "Абордаж. Отдайте приказы и снимите паузу." if voyage != null else "Противник у переправы. Отдайте приказы и снимите паузу."
 	_refresh_actions()
 
 func _toggle_combat_pause() -> void:
@@ -426,7 +437,10 @@ func _tick_combat(delta: float) -> void:
 		threatened = threatened or distance <= 2.0
 		var reach := 1.9 if use_spear else 1.4
 		if distance <= reach:
-			combat.strike(member_id, 1 if use_spear else 2)
+			var damage := 1 if use_spear else 2
+			if member_id == "companion":
+				damage += companion_damage_bonus
+			combat.strike(member_id, damage)
 			if combat.outcome == "victory":
 				_finish_combat(true)
 				return
@@ -439,6 +453,9 @@ func _tick_combat(delta: float) -> void:
 	_update_combat_status()
 
 func _finish_combat(victory: bool) -> void:
+	if victory:
+		var source := "river_boarding" if voyage != null else "landing_battle"
+		Progression.new(state.progression).award(source, combat.active_members, 3)
 	enemy.queue_free()
 	enemy = null
 	combat = null
@@ -451,11 +468,11 @@ func _finish_combat(victory: bool) -> void:
 	if victory:
 		state.flags["landing_victory"] = true
 		state.inventory["iron"] += 1
-		message.text = "Переправа отбита. Найдена заготовка железа."
+		hud_message_text = "Переправа отбита. Найдена заготовка железа."
 		_refresh_actions()
 		return
 	if _travel("landing_to_pier"):
-		message.text = "Дружина отступила к каневской пристани."
+		hud_message_text = "Дружина отступила к каневской пристани."
 	else:
 		_refresh_actions()
 
@@ -468,7 +485,7 @@ func _update_combat_status() -> void:
 	for member_id in MEMBER_IDS:
 		var order: Dictionary = current_orders.get(member_id, {})
 		shown.append(labels.get(order.get("kind"), "ожидает приказа"))
-	combat_status.text = "%s  ·  Противник: %d  ·  Стойкость дружины: %d\nОружие: %s  ·  Герой: %s  ·  Дружинник: %s" % [
+	hud_battle_text = "%s  ·  Противник: %d  ·  Стойкость дружины: %d\nОружие: %s  ·  Герой: %s  ·  Дружинник: %s" % [
 		"Пауза" if combat.paused else "Бой", combat.enemy_health, resolve_left,
 		"копьё" if use_spear else "меч", shown[0], shown[1]]
 
@@ -485,7 +502,7 @@ func _show_inventory() -> void:
 	var shop := Items.new(state.inventory)
 	var stats := shop.stats("shield")
 	var shield: Dictionary = state.inventory["shield"]
-	message.text = "Щит героя: защита %d · вес %d · прочность %d/%d · железо: %d" % [
+	hud_message_text = "Щит героя: защита %d · вес %d · прочность %d/%d · железо: %d" % [
 		stats["defense"], stats["weight"], shield["condition"], Items.MAX_CONDITION, state.inventory["iron"]]
 
 func _upgrade_shield() -> void:
@@ -495,7 +512,7 @@ func _upgrade_shield() -> void:
 		_update_shield_model()
 		_show_inventory()
 	else:
-		message.text = "Щит уже окован или не хватает железа."
+		hud_message_text = "Щит уже окован или не хватает железа."
 
 func _repair_shield() -> void:
 	if combat != null or not _has_repair_shop():
@@ -503,7 +520,7 @@ func _repair_shield() -> void:
 	if Items.new(state.inventory).repair("shield", Items.SMITH):
 		_show_inventory()
 	else:
-		message.text = "Щит цел или не хватает железа."
+		hud_message_text = "Щит цел или не хватает железа."
 
 func _add_quest_actions() -> void:
 	var choices := {
@@ -531,11 +548,15 @@ func _choose(choice_id: String) -> void:
 		"open": "Ты открыл проход и нашёл железо. Вернись на переправу к старосте.",
 		"seal": "Ты закрыл проход. Вернись на переправу к старосте.",
 	}
-	message.text = reactions.get(choice_id, "")
+	var detail: String = reactions.get(choice_id, "")
+	if choice_id in ["open", "seal"]:
+		if Progression.new(state.progression).award("hidden_passage", roster.active_ids(), 3):
+			detail += " Участники получили по 3 опыта."
+	hud_message_text = detail
 	_refresh_actions()
 
 func _show_journal() -> void:
-	message.text = quests.journal(state)
+	hud_message_text = quests.journal(state)
 
 func _add_settlement_actions() -> void:
 	if state.current_location != "landing":
@@ -575,7 +596,7 @@ func _show_settlement() -> void:
 	var work := "Стройки нет."
 	if not project.is_empty():
 		work = "%s будет готова к дню %d." % [_building_name(project["project_id"]), project["finish_day"]]
-	message.text = "День %d · Казна %d · Воевода: %s\n%s Завершено: %s" % [
+	hud_message_text = "День %d · Казна %d · Воевода: %s\n%s Завершено: %s" % [
 		holding["day"], holding["treasury"], "дружинник" if holding["reeve"] else "нет",
 		work, ", ".join(building) if not building.is_empty() else "ничего"]
 
@@ -583,7 +604,7 @@ func _commission(project_id: String) -> void:
 	if state.current_location != "landing":
 		return
 	if not Settlements.new(state.settlement).queue_building("landing", project_id):
-		message.text = "Заказ недоступен. Проверьте казну и текущие работы."
+		hud_message_text = "Заказ недоступен. Проверьте казну и текущие работы."
 		return
 	_refresh_actions()
 	_show_settlement()
@@ -640,7 +661,7 @@ func _begin_voyage() -> void:
 	_river_box(Vector3(3, 0.2, 0), Vector3(1.7, 0.45, 0.7), Color("#a95e4d"))
 	player_boat = _river_box(Vector3.ZERO, Vector3(1.05, 0.35, 0.62), Color("#e6bc62"))
 	_update_boat()
-	message.text = "Речной патруль впереди. Светлая полоса — мель."
+	hud_message_text = "Речной патруль впереди. Светлая полоса — мель."
 	_refresh_actions()
 
 func _river_box(at: Vector3, size: Vector3, color: Color) -> MeshInstance3D:
@@ -667,17 +688,17 @@ func _add_river_actions() -> void:
 	if voyage.position.x == 10:
 		travel_panel.add_child(_button("Пройти дальше по реке", func() -> void: _finish_voyage("passed")))
 	travel_panel.add_child(_button("Вернуться к берегу", func() -> void: _finish_voyage("retreated")))
-	combat_status.text = "Речной переход · Ладья: %d, %d · Груз: %d" % [
+	hud_battle_text = "Речной переход · Ладья: %d, %d · Груз: %d" % [
 		voyage.position.x, voyage.position.y, voyage.cargo]
 
 func _steer(direction: Vector2i) -> void:
 	if voyage == null or combat != null:
 		return
 	if not voyage.steer(direction):
-		message.text = "Ладья не может пройти в этом направлении."
+		hud_message_text = "Ладья не может пройти в этом направлении."
 		return
 	_update_boat()
-	message.text = ""
+	hud_message_text = ""
 	_refresh_actions()
 
 func _begin_boarding() -> void:
@@ -739,7 +760,7 @@ func _finish_voyage(outcome_id: String) -> void:
 		"passed": "Ладья миновала патруль и вернулась на переправу.",
 		"retreated": "Дружина вернулась к берегу. Можно попробовать снова.",
 	}
-	message.text = reactions.get(outcome_id, "")
+	hud_message_text = reactions.get(outcome_id, "")
 	voyage = null
 	_refresh_actions()
 
@@ -767,4 +788,39 @@ func _build_location_props() -> void:
 
 func _read_forest_marks() -> void:
 	if state.current_location == "forest":
-		message.text = "На столбе две зарубки: одна над водой, другая под водой. Перевозчик помечал здесь высоту разлива."
+		hud_message_text = "На столбе две зарубки: одна над водой, другая под водой. Перевозчик помечал здесь высоту разлива."
+func _build_feedback(ui: CanvasLayer) -> void:
+	ui.add_child(feedback_panel)
+	feedback_panel.position = Vector2(24, 386)
+	feedback_panel.custom_minimum_size.x = 530
+	feedback_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var background := StyleBoxFlat.new()
+	background.bg_color = Color(0.06, 0.075, 0.09, 0.88)
+	for side: Side in [SIDE_LEFT, SIDE_TOP, SIDE_RIGHT, SIDE_BOTTOM]:
+		background.set_content_margin(side, 10.0)
+	feedback_panel.add_theme_stylebox_override("panel", background)
+	var lines := VBoxContainer.new()
+	lines.add_theme_constant_override("separation", 8)
+	lines.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	feedback_panel.add_child(lines)
+	for label: Label in [combat_status, message]:
+		label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		lines.add_child(label)
+	_refresh_feedback()
+
+func _refresh_feedback() -> void:
+	combat_status.visible = not combat_status.text.is_empty()
+	message.visible = not message.text.is_empty()
+	feedback_panel.visible = started and not get_tree().paused and (
+		combat_status.visible or message.visible)
+
+func _show_load_error(detail: String) -> void:
+	if get_tree().paused:
+		menu_feedback.text = detail
+	else:
+		hud_message_text = detail
+func _show_progression() -> void:
+	var progress := Progression.new(state.progression)
+	hud_message_text = "Герой: уровень %d · опыт %d. Дружинник: уровень %d · опыт %d." % [
+		progress.level("hero"), progress.xp("hero"), progress.level("companion"), progress.xp("companion")]
