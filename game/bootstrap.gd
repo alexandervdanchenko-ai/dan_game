@@ -5,6 +5,9 @@ const Campaign = preload("res://game/campaign/campaign_state.gd")
 const Saves = preload("res://game/campaign/save_store.gd")
 const Graph = preload("res://game/world/world_graph.gd")
 const Items = preload("res://game/items/item_service.gd")
+const Quests = preload("res://game/quests/quest_service.gd")
+const Settlements = preload("res://game/settlements/settlement_service.gd")
+const Voyage = preload("res://game/travel/voyage_session.gd")
 const Party = preload("res://game/party/party_state.gd")
 const Combat = preload("res://game/combat/combat_session.gd")
 const MEMBER_IDS: Array[String] = ["hero", "companion"]
@@ -17,6 +20,12 @@ const WALK_SPEED: float = 3.5
 var state := Campaign.new()
 var roster := Party.new()
 var combat: RefCounted
+var voyage: RefCounted
+var river_view: Node3D
+var player_boat: MeshInstance3D
+var deck_view: Node3D
+var shore_positions: Array[Vector3] = []
+var hidden_shore: Array[Node3D] = []
 var enemy: MeshInstance3D
 var shield_mesh: MeshInstance3D
 var round_time: float = 0.0
@@ -26,6 +35,9 @@ var saves := Saves.new()
 var graph := Graph.new()
 var active_map: Node3D
 var travel_panel := VBoxContainer.new()
+var actions_scroll := ScrollContainer.new()
+var quests := Quests.new()
+var improvement_mesh: MeshInstance3D
 var message := Label.new()
 var combat_status := Label.new()
 var routes := Routes.new()
@@ -67,12 +79,18 @@ func _ready() -> void:
 	quit_button.pressed.connect(func() -> void: get_tree().quit())
 	ui.add_child(status_label)
 	status_label.position = Vector2(24, 24)
-	ui.add_child(travel_panel)
-	travel_panel.position = Vector2(24, 55)
+	ui.add_child(actions_scroll)
+	actions_scroll.position = Vector2(24, 55)
+	actions_scroll.size = Vector2(288, 315)
+	actions_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	actions_scroll.add_child(travel_panel)
+	travel_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	combat_status.position = Vector2(24, 390)
 	combat_status.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	ui.add_child(combat_status)
 	message.position = Vector2(24, 420)
+	message.size = Vector2(650, 100)
+	message.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	message.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	ui.add_child(message)
 	_show_menu()
@@ -92,7 +110,7 @@ func _box(at: Vector3, size: Vector3, color: Color) -> MeshInstance3D:
 func _show_menu() -> void:
 	get_tree().paused = true
 	status_label.hide()
-	travel_panel.hide()
+	actions_scroll.hide()
 	combat_status.hide()
 	panel.show()
 	title_label.text = "Пауза" if started else "Огни под Каневом"
@@ -105,7 +123,7 @@ func _start_or_resume() -> void:
 	panel.hide()
 	status_label.show()
 	_refresh_actions()
-	travel_panel.show()
+	actions_scroll.show()
 	combat_status.show()
 
 func _input(event: InputEvent) -> void:
@@ -121,7 +139,7 @@ func _unhandled_input(event: InputEvent) -> void:
 			_show_menu()
 		get_viewport().set_input_as_handled()
 		return
-	if get_tree().paused or not event is InputEventMouseButton:
+	if get_tree().paused or (voyage != null and combat == null) or not event is InputEventMouseButton:
 		return
 	if not event.pressed or event.button_index != MOUSE_BUTTON_LEFT:
 		return
@@ -187,6 +205,9 @@ func _refresh_actions() -> void:
 		_update_combat_status()
 		return
 	combat_status.text = ""
+	if voyage != null:
+		_add_river_actions()
+		return
 	if state.current_location == "landing" and not state.flags.get("landing_victory", false):
 		travel_panel.add_child(_button("Вступить в бой", _begin_combat))
 	for route_id: String in ["pier_to_landing", "landing_to_pier", "pier_to_hideout", "hideout_to_pier"]:
@@ -196,19 +217,18 @@ func _refresh_actions() -> void:
 			var destination: String = names.get(route["to"], route["to"])
 			travel_panel.add_child(_button("Путь: " + destination,
 				func() -> void: _travel(route_id)))
-	if state.current_location == "landing" and not state.flags.get("clue", false):
-		travel_panel.add_child(_button("Прочитать записку перевозчика", _discover_clue))
+	_add_quest_actions()
+	_add_settlement_actions()
 	travel_panel.add_child(_button("Снаряжение", _show_inventory))
 	if state.current_location == "pier":
 		travel_panel.add_child(_button("Оковать щит · 1 железо", _upgrade_shield))
+	if _has_repair_shop():
 		travel_panel.add_child(_button("Починить щит · 1 железо", _repair_shield))
 	travel_panel.add_child(_button("Сохранить", _save_slot))
 	travel_panel.add_child(_button("Загрузить", _load_slot))
 
 func _discover_clue() -> void:
-	state.flags["clue"] = true
-	message.text = "За старой пристанью теперь известен путь к тайной стоянке."
-	_refresh_actions()
+	_choose("note")
 
 func _stage_map(candidate: Campaign) -> Node3D:
 	var scene: PackedScene = locations.get(candidate.current_location)
@@ -253,10 +273,13 @@ func _activate_map(next_map: Node3D, candidate: Campaign) -> void:
 		party.append(_box(spawn, Vector3(0.55, 0.9, 0.55), colors[index]))
 		orders.append(PackedVector2Array())
 	shield_mesh = null
+	improvement_mesh = null
+	_sync_reeve()
 	_update_shield_model()
+	_refresh_improvement()
 
 func _travel(route_id: String) -> bool:
-	if combat != null:
+	if combat != null or voyage != null:
 		return false
 	if not graph.can_travel(route_id, state):
 		return false
@@ -266,6 +289,7 @@ func _travel(route_id: String) -> bool:
 	candidate.entry = route["entry"]
 	candidate.flags = state.flags.duplicate(true)
 	candidate.inventory = state.inventory.duplicate(true)
+	candidate.settlement = state.settlement.duplicate(true)
 	var next_map := _stage_map(candidate)
 	if next_map == null:
 		message.text = "Путь недоступен. Дружина осталась на прежнем месте."
@@ -276,7 +300,7 @@ func _travel(route_id: String) -> bool:
 	return true
 
 func _save_slot(slot_id: String = SLOT) -> bool:
-	if combat != null:
+	if combat != null or voyage != null:
 		return false
 	state.party_positions.clear()
 	for member in party:
@@ -294,6 +318,8 @@ func _load_slot(slot_id: String = SLOT) -> bool:
 	if next_map == null:
 		message.text = "Карта из сохранения недоступна."
 		return false
+	_clear_river_view()
+	voyage = null
 	_activate_map(next_map, candidate)
 	_start_or_resume()
 	message.text = "Игра загружена."
@@ -301,7 +327,8 @@ func _load_slot(slot_id: String = SLOT) -> bool:
 
 func _add_selection_actions() -> void:
 	travel_panel.add_child(_button("Выбрать героя", func() -> void: _select_fighters("hero")))
-	travel_panel.add_child(_button("Выбрать дружинника", func() -> void: _select_fighters("companion")))
+	if "companion" in roster.active_ids():
+		travel_panel.add_child(_button("Выбрать дружинника", func() -> void: _select_fighters("companion")))
 	travel_panel.add_child(_button("Выбрать всех", func() -> void: _select_fighters("")))
 	_update_selection()
 
@@ -318,23 +345,28 @@ func _update_selection() -> void:
 	for index in party.size():
 		party[index].scale = Vector3.ONE if MEMBER_IDS[index] in selected else Vector3(0.82, 0.82, 0.82)
 	status_label.text = "%s  ·  Выбрано: %d из %d  ·  Esc — меню" % [
-		active_map.get_meta("caption"), selected.size(), party.size()]
+		active_map.get_meta("caption"), selected.size(), roster.active_ids().size()]
 
 func _begin_combat() -> void:
 	if combat != null or state.current_location != "landing" or state.flags.get("landing_victory", false):
 		return
+	_start_fight(roster.active_ids())
+
+func _start_fight(fighters: Array[String]) -> void:
 	combat = Combat.new()
-	combat.active_members = roster.active_ids()
+	combat.active_members = fighters
 	combat.paused = true
 	round_time = 0.0
 	var shop := Items.new(state.inventory)
 	var shield: Dictionary = state.inventory["shield"]
 	resolve_left = 3 + int(shop.stats("shield")["defense"]) if shield["condition"] > 0 else 3
+	if state.settlement["buildings"].has("guard"):
+		resolve_left += 1
 	use_spear = false
 	for index in orders.size():
 		orders[index] = PackedVector2Array()
 	enemy = _box(Vector3(ENEMY_CELL.x, 0.5, ENEMY_CELL.y), Vector3(0.75, 1, 0.75), Color("#aa5349"))
-	message.text = "Противник у переправы. Отдайте приказы и снимите паузу."
+	message.text = "Абордаж. Отдайте приказы и снимите паузу." if voyage != null else "Противник у переправы. Отдайте приказы и снимите паузу."
 	_refresh_actions()
 
 func _toggle_combat_pause() -> void:
@@ -389,6 +421,8 @@ func _tick_combat(delta: float) -> void:
 	var threatened := false
 	for index in party.size():
 		var member_id := MEMBER_IDS[index]
+		if not member_id in combat.active_members:
+			continue
 		var distance := party[index].position.distance_to(enemy.position)
 		threatened = threatened or distance <= 2.0
 		var reach := 1.9 if use_spear else 1.4
@@ -411,6 +445,10 @@ func _finish_combat(victory: bool) -> void:
 	combat = null
 	for index in orders.size():
 		orders[index] = PackedVector2Array()
+	if voyage != null:
+		_restore_shore()
+		_finish_voyage("victory" if victory else "retreated")
+		return
 	if victory:
 		state.flags["landing_victory"] = true
 		state.inventory["iron"] += 1
@@ -461,9 +499,247 @@ func _upgrade_shield() -> void:
 		message.text = "Щит уже окован или не хватает железа."
 
 func _repair_shield() -> void:
-	if state.current_location != "pier" or combat != null:
+	if combat != null or not _has_repair_shop():
 		return
 	if Items.new(state.inventory).repair("shield", Items.SMITH):
 		_show_inventory()
 	else:
 		message.text = "Щит цел или не хватает железа."
+
+func _add_quest_actions() -> void:
+	var choices := {
+		"accept": "Поговорить с купцом о пропавшем судне",
+		"ward": "Попросить у ведуньи оберег",
+		"note": "Прочитать записку перевозчика",
+		"invoke": "Использовать оберег у воды",
+		"open": "Открыть проход для судов",
+		"seal": "Закрыть проход",
+	}
+	for choice_id: String in choices:
+		if quests.available(choice_id, state):
+			travel_panel.add_child(_button(choices[choice_id],
+				func() -> void: _choose(choice_id)))
+	travel_panel.add_child(_button("Журнал заданий", func() -> void: _show_journal()))
+
+func _choose(choice_id: String) -> void:
+	if not quests.apply_choice(choice_id, state):
+		return
+	var reactions := {
+		"accept": "Купец: после тумана к берегу прибило пустое судно. Спроси перевозчика о старом ходе.",
+		"ward": "Ведунья: опусти оберег в воду. Он покажет ход единожды.",
+		"note": "В записке отмечена тайная стоянка. На неё можно выйти от каневской пристани.",
+		"invoke": "Оберег рассыпался в воде. Огни указали путь к тайной стоянке.",
+		"open": "Ты открыл проход и нашёл железо. Вернись на переправу к старосте.",
+		"seal": "Ты закрыл проход. Вернись на переправу к старосте.",
+	}
+	message.text = reactions.get(choice_id, "")
+	_refresh_actions()
+
+func _show_journal() -> void:
+	message.text = quests.journal(state)
+
+func _add_settlement_actions() -> void:
+	if state.current_location != "landing":
+		return
+	if not state.settlement["owned"]:
+		if state.flags.get("quest_resolved", false):
+			travel_panel.add_child(_button("Принять переправу от старосты", _claim_landing))
+		return
+	travel_panel.add_child(_button("Дела переправы", _show_settlement))
+	if not state.flags.get("voyage_complete", false):
+		travel_panel.add_child(_button("Выйти на ладье", _begin_voyage))
+	travel_panel.add_child(_button(
+		"Призвать дружинника" if state.settlement["reeve"] == "companion" else "Назначить дружинника воеводой",
+		_toggle_reeve))
+	if state.settlement["construction"].is_empty():
+		for project_id: String in ["dock", "workshop", "guard"]:
+			if not state.settlement["buildings"].has(project_id):
+				travel_panel.add_child(_button("Заказать: " + _building_name(project_id),
+					func() -> void: _commission(project_id)))
+	travel_panel.add_child(_button("Отдохнуть до завтра", _next_day))
+
+func _building_name(project_id: String) -> String:
+	return {"dock": "Пристань", "workshop": "Мастерская", "guard": "Караульный пост"}.get(project_id, project_id)
+
+func _claim_landing() -> void:
+	if state.current_location == "landing" and state.flags.get("quest_resolved", false):
+		if Settlements.new(state.settlement).claim():
+			_refresh_actions()
+			_show_settlement()
+
+func _show_settlement() -> void:
+	var holding := state.settlement
+	var building := PackedStringArray()
+	for id: String in holding["buildings"]:
+		building.append(_building_name(id))
+	var project: Dictionary = holding["construction"]
+	var work := "Стройки нет."
+	if not project.is_empty():
+		work = "%s будет готова к дню %d." % [_building_name(project["project_id"]), project["finish_day"]]
+	message.text = "День %d · Казна %d · Воевода: %s\n%s Завершено: %s" % [
+		holding["day"], holding["treasury"], "дружинник" if holding["reeve"] else "нет",
+		work, ", ".join(building) if not building.is_empty() else "ничего"]
+
+func _commission(project_id: String) -> void:
+	if state.current_location != "landing":
+		return
+	if not Settlements.new(state.settlement).queue_building("landing", project_id):
+		message.text = "Заказ недоступен. Проверьте казну и текущие работы."
+		return
+	_refresh_actions()
+	_show_settlement()
+
+func _next_day() -> void:
+	if state.current_location != "landing" or not state.settlement["owned"]:
+		return
+	Settlements.new(state.settlement).advance_day(int(state.settlement["day"]) + 1)
+	_refresh_improvement()
+	_refresh_actions()
+	_show_settlement()
+
+func _toggle_reeve() -> void:
+	if state.current_location != "landing":
+		return
+	var member := "" if state.settlement["reeve"] == "companion" else "companion"
+	if Settlements.new(state.settlement).assign_reeve(member):
+		_sync_reeve()
+		_refresh_actions()
+		_show_settlement()
+
+func _sync_reeve() -> void:
+	var assigned: bool = state.settlement["reeve"] == "companion"
+	roster.assign_role("companion", "voevoda" if assigned else "field")
+	party[1].visible = not assigned
+	orders[1] = PackedVector2Array()
+
+func _refresh_improvement() -> void:
+	if improvement_mesh != null:
+		improvement_mesh.queue_free()
+		improvement_mesh = null
+	if state.current_location != "landing" or state.settlement["buildings"].is_empty():
+		return
+	var buildings: Dictionary = state.settlement["buildings"]
+	var tint := Color("#85674b") if buildings.has("dock") else Color("#646d67")
+	improvement_mesh = _box(Vector3(-3, 0.3, 5.75), Vector3(3, 0.6, 1.8), tint)
+
+
+func _has_repair_shop() -> bool:
+	return state.current_location == "pier" or (
+		state.current_location == "landing" and state.settlement["buildings"].has("workshop"))
+
+func _begin_voyage() -> void:
+	if state.current_location != "landing" or not state.settlement["owned"] or voyage != null:
+		return
+	if state.flags.get("voyage_complete", false):
+		return
+	voyage = Voyage.new(roster.active_ids(), 1 if state.settlement["buildings"].has("dock") else 0)
+	active_map.hide()
+	river_view = Node3D.new()
+	world.add_child(river_view)
+	_river_box(Vector3(0, -0.2, 0), Vector3(12, 0.3, 10), Color("#386e85"))
+	_river_box(Vector3(0, -0.02, -1), Vector3(3, 0.1, 1), Color("#baa86f"))
+	_river_box(Vector3(3, 0.2, 0), Vector3(1.7, 0.45, 0.7), Color("#a95e4d"))
+	player_boat = _river_box(Vector3.ZERO, Vector3(1.05, 0.35, 0.62), Color("#e6bc62"))
+	_update_boat()
+	message.text = "Речной патруль впереди. Светлая полоса — мель."
+	_refresh_actions()
+
+func _river_box(at: Vector3, size: Vector3, color: Color) -> MeshInstance3D:
+	var model := _box(at, size, color)
+	model.reparent(river_view, false)
+	return model
+
+func _update_boat() -> void:
+	var position_on_river: Vector2 = voyage.position
+	var direction: Vector2 = voyage.heading
+	player_boat.position = Vector3(position_on_river.x - 5, 0.2, position_on_river.y - 4)
+	player_boat.rotation.y = -direction.angle()
+
+func _add_river_actions() -> void:
+	for direction: Vector2i in [Vector2i.UP, Vector2i.DOWN, Vector2i.LEFT, Vector2i.RIGHT]:
+		var label: String = {
+			Vector2i.UP: "На север", Vector2i.DOWN: "На юг",
+			Vector2i.LEFT: "На запад", Vector2i.RIGHT: "На восток",
+		}[direction]
+		travel_panel.add_child(_button(label, func() -> void: _steer(direction)))
+	if voyage.can_board():
+		travel_panel.add_child(_button("Договориться с патрулём", func() -> void: _finish_voyage("negotiated")))
+		travel_panel.add_child(_button("Взять на абордаж", _begin_boarding))
+	if voyage.position.x == 10:
+		travel_panel.add_child(_button("Пройти дальше по реке", func() -> void: _finish_voyage("passed")))
+	travel_panel.add_child(_button("Вернуться к берегу", func() -> void: _finish_voyage("retreated")))
+	combat_status.text = "Речной переход · Ладья: %d, %d · Груз: %d" % [
+		voyage.position.x, voyage.position.y, voyage.cargo]
+
+func _steer(direction: Vector2i) -> void:
+	if voyage == null or combat != null:
+		return
+	if not voyage.steer(direction):
+		message.text = "Ладья не может пройти в этом направлении."
+		return
+	_update_boat()
+	message.text = ""
+	_refresh_actions()
+
+func _begin_boarding() -> void:
+	if voyage == null or combat != null or not voyage.start_boarding(Voyage.PATROL_ID):
+		return
+	_clear_river_view()
+	active_map.show()
+	shore_positions.clear()
+	hidden_shore.clear()
+	for child: Node in active_map.get_children():
+		if child is MeshInstance3D and not child in party and child.visible:
+			hidden_shore.append(child)
+			child.hide()
+	for index in party.size():
+		shore_positions.append(party[index].position)
+		party[index].position = Vector3(-5, 0.45, index)
+	deck_view = Node3D.new()
+	active_map.add_child(deck_view)
+	_deck_box(Vector3(0, -0.35, 0), Vector3(20, 0.3, 14), Color("#386e85"))
+	_deck_box(Vector3(0, -0.16, -3), Vector3(17, 0.3, 5), Color("#826043"))
+	_deck_box(Vector3(0, -0.16, 3), Vector3(17, 0.3, 5), Color("#694b38"))
+	_deck_box(Vector3(0, -0.15, 0), Vector3(17, 0.3, 1), Color("#a18a69"))
+	_deck_box(Vector3(0, 0.5, 0), Vector3(2.9, 1, 2.9), Color("#995e3b"))
+	_start_fight(voyage.boarding_crew())
+
+func _deck_box(at: Vector3, size: Vector3, color: Color) -> void:
+	_box(at, size, color).reparent(deck_view, false)
+
+func _restore_shore() -> void:
+	if deck_view == null:
+		return
+	deck_view.queue_free()
+	deck_view = null
+	for node in hidden_shore:
+		node.show()
+	hidden_shore.clear()
+	for index in party.size():
+		party[index].position = shore_positions[index]
+	shore_positions.clear()
+
+func _clear_river_view() -> void:
+	if river_view != null:
+		river_view.queue_free()
+		river_view = null
+	player_boat = null
+
+func _finish_voyage(outcome_id: String) -> void:
+	if voyage == null or combat != null or not voyage.resolve_encounter(outcome_id):
+		return
+	_clear_river_view()
+	active_map.show()
+	if outcome_id != "retreated":
+		state.flags["voyage_complete"] = true
+		state.flags["voyage_" + outcome_id] = true
+		state.inventory["iron"] = mini(999, int(state.inventory["iron"]) + int(voyage.cargo))
+	var reactions := {
+		"victory": "Патруль побеждён. Груз доставлен на переправу.",
+		"negotiated": "Патруль пропустил ладью. Дружина вернулась с грузом.",
+		"passed": "Ладья миновала патруль и вернулась на переправу.",
+		"retreated": "Дружина вернулась к берегу. Можно попробовать снова.",
+	}
+	message.text = reactions.get(outcome_id, "")
+	voyage = null
+	_refresh_actions()

@@ -2,6 +2,7 @@ class_name CampaignState
 extends RefCounted
 
 const Items = preload("res://game/items/item_service.gd")
+const Settlements = preload("res://game/settlements/settlement_service.gd")
 const SAVE_VERSION: int = 1
 
 var current_location: String = "pier"
@@ -9,6 +10,7 @@ var entry: String = "default"
 var flags: Dictionary = {}
 var party_positions: Array[Vector3] = []
 var inventory := Items.starter_pack()
+var settlement := Settlements.initial_state()
 
 func to_payload() -> Dictionary:
 	var positions: Array = []
@@ -21,6 +23,7 @@ func to_payload() -> Dictionary:
 		"flags": flags.duplicate(),
 		"party_positions": positions,
 		"inventory": inventory.duplicate(true),
+		"settlement": settlement.duplicate(true),
 	}
 
 func restore(payload: Dictionary) -> bool:
@@ -53,6 +56,10 @@ func restore(payload: Dictionary) -> bool:
 	var bag: Variant = payload.get("inventory", Items.starter_pack())
 	if not Items.validate(bag):
 		return false
+	var holding: Variant = payload.get("settlement", Settlements.initial_state())
+	if not Settlements.validate(holding):
+		return false
+	settlement = holding.duplicate(true)
 	inventory = bag.duplicate(true)
 	current_location = location_value
 	entry = entry_value
