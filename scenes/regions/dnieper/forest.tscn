@@ -1,0 +1,87 @@
+[gd_scene load_steps=7 format=3]
+
+[sub_resource type="StandardMaterial3D" id="Soil"]
+albedo_color = Color(0.17, 0.26, 0.17, 1)
+
+[sub_resource type="BoxMesh" id="Bank"]
+material = SubResource("Soil")
+size = Vector3(17, 0.5, 3)
+
+[sub_resource type="StandardMaterial3D" id="Bark"]
+albedo_color = Color(0.31, 0.22, 0.14, 1)
+
+[sub_resource type="CylinderMesh" id="Trunk"]
+material = SubResource("Bark")
+top_radius = 0.13
+bottom_radius = 0.20
+height = 1.8
+radial_segments = 6
+
+[sub_resource type="StandardMaterial3D" id="Pine"]
+albedo_color = Color(0.13, 0.30, 0.21, 1)
+
+[sub_resource type="CylinderMesh" id="Canopy"]
+material = SubResource("Pine")
+top_radius = 0.0
+bottom_radius = 1.05
+height = 2.8
+radial_segments = 6
+
+[node name="Forest" type="Node3D"]
+metadata/caption = "Лесная опушка"
+metadata/ground = Color(0.35, 0.46, 0.27, 1)
+
+[node name="forest_pier" type="Marker3D" parent="."]
+position = Vector3(-5, 0.45, 0)
+
+[node name="ForestBank" type="MeshInstance3D" parent="."]
+position = Vector3(0, -0.25, -7)
+mesh = SubResource("Bank")
+
+[node name="Pine1" type="MeshInstance3D" parent="."]
+position = Vector3(-7, 0.9, -6.7)
+mesh = SubResource("Trunk")
+
+[node name="Canopy" type="MeshInstance3D" parent="Pine1"]
+position = Vector3(0, 1.15, 0)
+mesh = SubResource("Canopy")
+
+[node name="Pine2" type="MeshInstance3D" parent="."]
+position = Vector3(-4, 0.9, -7.9)
+mesh = SubResource("Trunk")
+
+[node name="Canopy" type="MeshInstance3D" parent="Pine2"]
+position = Vector3(0, 1.5, 0)
+mesh = SubResource("Canopy")
+
+[node name="Pine3" type="MeshInstance3D" parent="."]
+position = Vector3(-1, 0.9, -6.7)
+mesh = SubResource("Trunk")
+
+[node name="Canopy" type="MeshInstance3D" parent="Pine3"]
+position = Vector3(0, 1.15, 0)
+mesh = SubResource("Canopy")
+
+[node name="Pine4" type="MeshInstance3D" parent="."]
+position = Vector3(2, 0.9, -7.9)
+mesh = SubResource("Trunk")
+
+[node name="Canopy" type="MeshInstance3D" parent="Pine4"]
+position = Vector3(0, 1.5, 0)
+mesh = SubResource("Canopy")
+
+[node name="Pine5" type="MeshInstance3D" parent="."]
+position = Vector3(5, 0.9, -6.7)
+mesh = SubResource("Trunk")
+
+[node name="Canopy" type="MeshInstance3D" parent="Pine5"]
+position = Vector3(0, 1.15, 0)
+mesh = SubResource("Canopy")
+
+[node name="Pine6" type="MeshInstance3D" parent="."]
+position = Vector3(7, 0.9, -7.9)
+mesh = SubResource("Trunk")
+
+[node name="Canopy" type="MeshInstance3D" parent="Pine6"]
+position = Vector3(0, 1.5, 0)
+mesh = SubResource("Canopy")

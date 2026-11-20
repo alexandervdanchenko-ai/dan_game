@@ -20,6 +20,16 @@
 			"from": "hideout",
 			"to": "pier",
 			"entry": "pier_landing"
+		},
+		"pier_to_forest": {
+			"from": "pier",
+			"to": "forest",
+			"entry": "forest_pier"
+		},
+		"forest_to_pier": {
+			"from": "forest",
+			"to": "pier",
+			"entry": "pier_landing"
 		}
 	}
 }

@@ -210,15 +210,17 @@ func _refresh_actions() -> void:
 		return
 	if state.current_location == "landing" and not state.flags.get("landing_victory", false):
 		travel_panel.add_child(_button("Вступить в бой", _begin_combat))
-	for route_id: String in ["pier_to_landing", "landing_to_pier", "pier_to_hideout", "hideout_to_pier"]:
+	for route_id: String in ["pier_to_landing", "landing_to_pier", "pier_to_hideout", "hideout_to_pier", "pier_to_forest", "forest_to_pier"]:
 		if graph.can_travel(route_id, state):
 			var route := graph.get_route(route_id)
-			var names := {"pier": "Каневская пристань", "landing": "Переправа", "hideout": "Тайная стоянка"}
+			var names := {"pier": "Каневская пристань", "landing": "Переправа", "hideout": "Тайная стоянка", "forest": "Лесная тропа"}
 			var destination: String = names.get(route["to"], route["to"])
 			travel_panel.add_child(_button("Путь: " + destination,
 				func() -> void: _travel(route_id)))
 	_add_quest_actions()
 	_add_settlement_actions()
+	if state.current_location == "forest":
+		travel_panel.add_child(_button("Осмотреть зарубки на столбе", _read_forest_marks))
 	travel_panel.add_child(_button("Снаряжение", _show_inventory))
 	if state.current_location == "pier":
 		travel_panel.add_child(_button("Оковать щит · 1 железо", _upgrade_shield))
@@ -258,10 +260,7 @@ func _activate_map(next_map: Node3D, candidate: Campaign) -> void:
 	orders.clear()
 	var ground: Color = active_map.get_meta("ground")
 	_box(Vector3(0, -0.25, 0), Vector3(17, 0.5, 11), ground)
-	_box(Vector3(0, -0.4, 9.5), Vector3(21, 0.5, 8), Color("#385b70"))
-	_box(Vector3(4, -0.06, 6), Vector3(2, 0.2, 4), Color("#81604a"))
-	_box(Vector3(0, 0.95, 0), Vector3(2.9, 1.9, 2.9), Color("#8a6550"))
-	_box(Vector3(0, 1.95, 0), Vector3(3.2, 0.25, 3.2), Color("#554134"))
+	_build_location_props()
 	var colors: Array[Color] = [Color("#e6bc62"), Color("#a5c4db")]
 	for index in colors.size():
 		var spawn := marker.position + Vector3(0, 0, index)
@@ -743,3 +742,29 @@ func _finish_voyage(outcome_id: String) -> void:
 	message.text = reactions.get(outcome_id, "")
 	voyage = null
 	_refresh_actions()
+
+func _build_location_props() -> void:
+	if state.current_location == "forest":
+		_box(Vector3(0, 0.4, 0), Vector3(2.9, 0.8, 2.9), Color("#606458"))
+		for index in 7:
+			var x := float(index - 3) * 2.5
+			_box(Vector3(x, 0.65, 5.2), Vector3(0.25, 1.3, 0.25), Color("#6f5344"))
+			_box(Vector3(x, 1.65, 5.2), Vector3(1.0, 1.1, 1.0), Color("#31594b"))
+		return
+	_box(Vector3(0, -0.4, 9.5), Vector3(21, 0.5, 8), Color("#385b70"))
+	_box(Vector3(4, -0.06, 6), Vector3(2, 0.2, 4), Color("#81604a"))
+	var wall := Color("#8a6550")
+	var roof := Color("#554134")
+	match state.current_location:
+		"landing":
+			wall = Color("#826f55")
+			roof = Color("#665141")
+		"hideout":
+			wall = Color("#5d665d")
+			roof = Color("#46554b")
+	_box(Vector3(0, 0.95, 0), Vector3(2.9, 1.9, 2.9), wall)
+	_box(Vector3(0, 1.95, 0), Vector3(3.2, 0.25, 3.2), roof)
+
+func _read_forest_marks() -> void:
+	if state.current_location == "forest":
+		message.text = "На столбе две зарубки: одна над водой, другая под водой. Перевозчик помечал здесь высоту разлива."

@@ -21,6 +21,28 @@ func _initialize() -> void:
 	if graph.can_travel("pier_to_hideout", state):
 		_fail("The hideout route must require the clue")
 		return
+	if not graph.can_travel("pier_to_forest", state) or graph.can_travel("forest_to_pier", state):
+		_fail("The forest must be accessible from the pier without the clue")
+		return
+	var forest_route: Dictionary = graph.get_route("pier_to_forest")
+	if forest_route.get("to") != "forest" or forest_route.get("entry") != "forest_pier":
+		_fail("The forest route must select its designated entrance")
+		return
+	var forest_scene := load("res://scenes/regions/dnieper/forest.tscn") as PackedScene
+	if forest_scene == null:
+		_fail("The forest map scene must load")
+		return
+	var forest_map := forest_scene.instantiate()
+	var has_entry := forest_map.get_node_or_null(NodePath(forest_route["entry"])) is Marker3D
+	forest_map.free()
+	if not has_entry:
+		_fail("The forest map must supply the route entry marker")
+		return
+	state.current_location = "forest"
+	if not graph.can_travel("forest_to_pier", state) or graph.can_travel("pier_to_forest", state):
+		_fail("The forest must have a return route")
+		return
+	state.current_location = "pier"
 	state.flags["clue"] = false
 	if graph.can_travel("pier_to_hideout", state):
 		_fail("A false clue flag must not enable the hideout route")
