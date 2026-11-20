@@ -4,6 +4,7 @@ const Routes = preload("res://game/pier_routes.gd")
 const Campaign = preload("res://game/campaign/campaign_state.gd")
 const Saves = preload("res://game/campaign/save_store.gd")
 const Graph = preload("res://game/world/world_graph.gd")
+const Items = preload("res://game/items/item_service.gd")
 const Party = preload("res://game/party/party_state.gd")
 const Combat = preload("res://game/combat/combat_session.gd")
 const MEMBER_IDS: Array[String] = ["hero", "companion"]
@@ -17,6 +18,7 @@ var state := Campaign.new()
 var roster := Party.new()
 var combat: RefCounted
 var enemy: MeshInstance3D
+var shield_mesh: MeshInstance3D
 var round_time: float = 0.0
 var resolve_left: int = 4
 var use_spear: bool = false
@@ -196,6 +198,10 @@ func _refresh_actions() -> void:
 				func() -> void: _travel(route_id)))
 	if state.current_location == "landing" and not state.flags.get("clue", false):
 		travel_panel.add_child(_button("Прочитать записку перевозчика", _discover_clue))
+	travel_panel.add_child(_button("Снаряжение", _show_inventory))
+	if state.current_location == "pier":
+		travel_panel.add_child(_button("Оковать щит · 1 железо", _upgrade_shield))
+		travel_panel.add_child(_button("Починить щит · 1 железо", _repair_shield))
 	travel_panel.add_child(_button("Сохранить", _save_slot))
 	travel_panel.add_child(_button("Загрузить", _load_slot))
 
@@ -246,6 +252,8 @@ func _activate_map(next_map: Node3D, candidate: Campaign) -> void:
 				spawn = Vector3(saved.x, marker.position.y, saved.z)
 		party.append(_box(spawn, Vector3(0.55, 0.9, 0.55), colors[index]))
 		orders.append(PackedVector2Array())
+	shield_mesh = null
+	_update_shield_model()
 
 func _travel(route_id: String) -> bool:
 	if combat != null:
@@ -257,6 +265,7 @@ func _travel(route_id: String) -> bool:
 	candidate.current_location = route["to"]
 	candidate.entry = route["entry"]
 	candidate.flags = state.flags.duplicate(true)
+	candidate.inventory = state.inventory.duplicate(true)
 	var next_map := _stage_map(candidate)
 	if next_map == null:
 		message.text = "Путь недоступен. Дружина осталась на прежнем месте."
@@ -318,7 +327,9 @@ func _begin_combat() -> void:
 	combat.active_members = roster.active_ids()
 	combat.paused = true
 	round_time = 0.0
-	resolve_left = 4
+	var shop := Items.new(state.inventory)
+	var shield: Dictionary = state.inventory["shield"]
+	resolve_left = 3 + int(shop.stats("shield")["defense"]) if shield["condition"] > 0 else 3
 	use_spear = false
 	for index in orders.size():
 		orders[index] = PackedVector2Array()
@@ -388,6 +399,7 @@ func _tick_combat(delta: float) -> void:
 				return
 	if threatened:
 		resolve_left -= 1
+		Items.new(state.inventory).absorb_wear()
 		if resolve_left == 0 and combat.retreat():
 			_finish_combat(false)
 			return
@@ -401,7 +413,8 @@ func _finish_combat(victory: bool) -> void:
 		orders[index] = PackedVector2Array()
 	if victory:
 		state.flags["landing_victory"] = true
-		message.text = "Переправа отбита."
+		state.inventory["iron"] += 1
+		message.text = "Переправа отбита. Найдена заготовка железа."
 		_refresh_actions()
 		return
 	if _travel("landing_to_pier"):
@@ -421,3 +434,36 @@ func _update_combat_status() -> void:
 	combat_status.text = "%s  ·  Противник: %d  ·  Стойкость дружины: %d\nОружие: %s  ·  Герой: %s  ·  Дружинник: %s" % [
 		"Пауза" if combat.paused else "Бой", combat.enemy_health, resolve_left,
 		"копьё" if use_spear else "меч", shown[0], shown[1]]
+
+func _update_shield_model() -> void:
+	if shield_mesh != null:
+		shield_mesh.queue_free()
+	var shield: Dictionary = state.inventory["shield"]
+	var color := Color("#bac9d0") if shield["rim"] else Color("#996c43")
+	shield_mesh = _box(Vector3.ZERO, Vector3(0.13, 0.52, 0.48), color)
+	shield_mesh.reparent(party[0], false)
+	shield_mesh.position = Vector3(0.33, 0.05, 0)
+
+func _show_inventory() -> void:
+	var shop := Items.new(state.inventory)
+	var stats := shop.stats("shield")
+	var shield: Dictionary = state.inventory["shield"]
+	message.text = "Щит героя: защита %d · вес %d · прочность %d/%d · железо: %d" % [
+		stats["defense"], stats["weight"], shield["condition"], Items.MAX_CONDITION, state.inventory["iron"]]
+
+func _upgrade_shield() -> void:
+	if state.current_location != "pier" or combat != null:
+		return
+	if Items.new(state.inventory).apply_upgrade("shield", "rim", Items.SMITH):
+		_update_shield_model()
+		_show_inventory()
+	else:
+		message.text = "Щит уже окован или не хватает железа."
+
+func _repair_shield() -> void:
+	if state.current_location != "pier" or combat != null:
+		return
+	if Items.new(state.inventory).repair("shield", Items.SMITH):
+		_show_inventory()
+	else:
+		message.text = "Щит цел или не хватает железа."
