@@ -1,6 +1,10 @@
-[gd_scene load_steps=2 format=3]
+[gd_scene load_steps=5 format=3]
 
 [ext_resource type="Script" path="res://game/bootstrap.gd" id="1"]
+[ext_resource type="PackedScene" path="res://scenes/regions/dnieper/pier.tscn" id="2"]
+[ext_resource type="PackedScene" path="res://scenes/regions/dnieper/landing.tscn" id="3"]
+[ext_resource type="PackedScene" path="res://scenes/regions/dnieper/hideout.tscn" id="4"]
 
 [node name="Bootstrap" type="Node"]
 script = ExtResource("1")
+locations = Dictionary[String, PackedScene]({"pier": ExtResource("2"), "landing": ExtResource("3"), "hideout": ExtResource("4")})

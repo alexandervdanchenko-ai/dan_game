@@ -1,0 +1,8 @@
+[gd_scene format=3]
+
+[node name="Hideout" type="Node3D"]
+metadata/caption = "Тайная стоянка"
+metadata/ground = Color(0.3373, 0.4667, 0.4157, 1)
+
+[node name="hideout_pier" type="Marker3D" parent="."]
+position = Vector3(-5, 0.45, 0)

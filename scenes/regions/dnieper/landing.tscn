@@ -1,0 +1,8 @@
+[gd_scene format=3]
+
+[node name="Landing" type="Node3D"]
+metadata/caption = "Переправа"
+metadata/ground = Color(0.6118, 0.5647, 0.3882, 1)
+
+[node name="landing_pier" type="Marker3D" parent="."]
+position = Vector3(-5, 0.45, 0)

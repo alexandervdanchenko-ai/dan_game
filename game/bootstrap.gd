@@ -1,8 +1,20 @@
 extends Node
 
 const Routes = preload("res://game/pier_routes.gd")
+const Campaign = preload("res://game/campaign/campaign_state.gd")
+const Saves = preload("res://game/campaign/save_store.gd")
+const Graph = preload("res://game/world/world_graph.gd")
+const SLOT := "campaign"
 const WALK_SPEED: float = 3.5
 
+@export var locations: Dictionary[String, PackedScene]
+
+var state := Campaign.new()
+var saves := Saves.new()
+var graph := Graph.new()
+var active_map: Node3D
+var travel_panel := VBoxContainer.new()
+var message := Label.new()
 var routes := Routes.new()
 var camera := Camera3D.new()
 var party: Array[MeshInstance3D] = []
@@ -28,29 +40,25 @@ func _ready() -> void:
 	world.add_child(light)
 	light.rotation_degrees = Vector3(-55, -30, 0)
 	light.shadow_enabled = true
-	_box(Vector3(0, -0.25, 0), Vector3(17, 0.5, 11), Color("#80926a"))
-	_box(Vector3(0, -0.4, 9.5), Vector3(21, 0.5, 8), Color("#385b70"))
-	_box(Vector3(4, -0.06, 6), Vector3(2, 0.2, 4), Color("#81604a"))
-	_box(Vector3(0, 0.95, 0), Vector3(2.9, 1.9, 2.9), Color("#8a6550"))
-	_box(Vector3(0, 1.95, 0), Vector3(3.2, 0.25, 3.2), Color("#554134"))
-	party.append(_box(Vector3(-5, 0.45, 0), Vector3(0.55, 0.9, 0.55), Color("#e6bc62")))
-	party.append(_box(Vector3(-5, 0.45, 1), Vector3(0.55, 0.9, 0.55), Color("#a5c4db")))
-	for member in party:
-		orders.append(PackedVector2Array())
+	_activate_map(_stage_map(state), state)
 	var ui := CanvasLayer.new()
 	add_child(ui)
 	ui.add_child(panel)
 	panel.position = Vector2(24, 24)
 	var menu := VBoxContainer.new()
 	panel.add_child(menu)
-	for control: Control in [title_label, start_button, quit_button]:
+	for control: Control in [title_label, start_button, _button("Загрузить", _load_slot), quit_button]:
 		menu.add_child(control)
 	start_button.pressed.connect(_start_or_resume)
 	quit_button.text = "Выйти"
 	quit_button.pressed.connect(func() -> void: get_tree().quit())
 	ui.add_child(status_label)
 	status_label.position = Vector2(24, 24)
-	status_label.text = "Пристань  ·  ЛКМ — вести дружину  ·  Esc — пауза"
+	ui.add_child(travel_panel)
+	travel_panel.position = Vector2(24, 55)
+	message.position = Vector2(24, 240)
+	message.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	ui.add_child(message)
 	_show_menu()
 
 func _box(at: Vector3, size: Vector3, color: Color) -> MeshInstance3D:
@@ -61,13 +69,14 @@ func _box(at: Vector3, size: Vector3, color: Color) -> MeshInstance3D:
 	material.albedo_color = color
 	shape.material = material
 	model.mesh = shape
-	world.add_child(model)
+	active_map.add_child(model)
 	model.position = at
 	return model
 
 func _show_menu() -> void:
 	get_tree().paused = true
 	status_label.hide()
+	travel_panel.hide()
 	panel.show()
 	title_label.text = "Пауза" if started else "Огни под Каневом"
 	start_button.text = "Продолжить" if started else "Начать"
@@ -78,6 +87,8 @@ func _start_or_resume() -> void:
 	get_tree().paused = false
 	panel.hide()
 	status_label.show()
+	_refresh_actions()
+	travel_panel.show()
 
 func _unhandled_input(event: InputEvent) -> void:
 	if started and event.is_action_pressed("ui_cancel"):
@@ -124,3 +135,110 @@ func _physics_process(delta: float) -> void:
 			var remaining := orders[index]
 			remaining.remove_at(0)
 			orders[index] = remaining
+
+func _button(caption: String, action: Callable) -> Button:
+	var button := Button.new()
+	button.text = caption
+	button.pressed.connect(action)
+	return button
+
+func _refresh_actions() -> void:
+	for child in travel_panel.get_children():
+		travel_panel.remove_child(child)
+		child.queue_free()
+	status_label.text = "%s  ·  ЛКМ — вести дружину  ·  Esc — пауза" % active_map.get_meta("caption")
+	for route_id: String in ["pier_to_landing", "landing_to_pier", "pier_to_hideout", "hideout_to_pier"]:
+		if graph.can_travel(route_id, state):
+			var route := graph.get_route(route_id)
+			var names := {"pier": "Каневская пристань", "landing": "Переправа", "hideout": "Тайная стоянка"}
+			var destination: String = names.get(route["to"], route["to"])
+			travel_panel.add_child(_button("Путь: " + destination,
+				func() -> void: _travel(route_id)))
+	if state.current_location == "landing" and not state.flags.get("clue", false):
+		travel_panel.add_child(_button("Прочитать записку перевозчика", _discover_clue))
+	travel_panel.add_child(_button("Сохранить", _save_slot))
+	travel_panel.add_child(_button("Загрузить", _load_slot))
+
+func _discover_clue() -> void:
+	state.flags["clue"] = true
+	message.text = "За старой пристанью теперь известен путь к тайной стоянке."
+	_refresh_actions()
+
+func _stage_map(candidate: Campaign) -> Node3D:
+	var scene: PackedScene = locations.get(candidate.current_location)
+	if scene == null:
+		return null
+	var next_map := scene.instantiate() as Node3D
+	if next_map == null:
+		return null
+	var marker := next_map.get_node_or_null(NodePath(candidate.entry)) as Marker3D
+	if marker == null:
+		next_map.free()
+		return null
+	return next_map
+
+func _activate_map(next_map: Node3D, candidate: Campaign) -> void:
+	if active_map != null:
+		world.remove_child(active_map)
+		active_map.queue_free()
+	active_map = next_map
+	var marker := active_map.get_node(NodePath(candidate.entry)) as Marker3D
+	world.add_child(active_map)
+	state = candidate
+	party.clear()
+	orders.clear()
+	var ground: Color = active_map.get_meta("ground")
+	_box(Vector3(0, -0.25, 0), Vector3(17, 0.5, 11), ground)
+	_box(Vector3(0, -0.4, 9.5), Vector3(21, 0.5, 8), Color("#385b70"))
+	_box(Vector3(4, -0.06, 6), Vector3(2, 0.2, 4), Color("#81604a"))
+	_box(Vector3(0, 0.95, 0), Vector3(2.9, 1.9, 2.9), Color("#8a6550"))
+	_box(Vector3(0, 1.95, 0), Vector3(3.2, 0.25, 3.2), Color("#554134"))
+	var colors: Array[Color] = [Color("#e6bc62"), Color("#a5c4db")]
+	for index in colors.size():
+		var spawn := marker.position + Vector3(0, 0, index)
+		if candidate.party_positions.size() == colors.size():
+			var saved: Vector3 = candidate.party_positions[index]
+			var cell := Vector2i(roundi(saved.x), roundi(saved.z))
+			if routes.grid.region.has_point(cell) and not routes.grid.is_point_solid(cell):
+				spawn = Vector3(saved.x, marker.position.y, saved.z)
+		party.append(_box(spawn, Vector3(0.55, 0.9, 0.55), colors[index]))
+		orders.append(PackedVector2Array())
+
+func _travel(route_id: String) -> bool:
+	if not graph.can_travel(route_id, state):
+		return false
+	var route := graph.get_route(route_id)
+	var candidate := Campaign.new()
+	candidate.current_location = route["to"]
+	candidate.entry = route["entry"]
+	candidate.flags = state.flags.duplicate(true)
+	var next_map := _stage_map(candidate)
+	if next_map == null:
+		message.text = "Путь недоступен. Дружина осталась на прежнем месте."
+		return false
+	_activate_map(next_map, candidate)
+	message.text = ""
+	_refresh_actions()
+	return true
+
+func _save_slot(slot_id: String = SLOT) -> bool:
+	state.party_positions.clear()
+	for member in party:
+		state.party_positions.append(member.position)
+	var saved := saves.write(slot_id, state) == OK
+	message.text = "Игра сохранена." if saved else "Не удалось сохранить игру."
+	return saved
+
+func _load_slot(slot_id: String = SLOT) -> bool:
+	var candidate := saves.read(slot_id)
+	if candidate == null:
+		message.text = "Нет доступного сохранения."
+		return false
+	var next_map := _stage_map(candidate)
+	if next_map == null:
+		message.text = "Карта из сохранения недоступна."
+		return false
+	_activate_map(next_map, candidate)
+	_start_or_resume()
+	message.text = "Игра загружена."
+	return true

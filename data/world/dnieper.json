@@ -1,0 +1,25 @@
+{
+	"routes": {
+		"pier_to_landing": {
+			"from": "pier",
+			"to": "landing",
+			"entry": "landing_pier"
+		},
+		"landing_to_pier": {
+			"from": "landing",
+			"to": "pier",
+			"entry": "pier_landing"
+		},
+		"pier_to_hideout": {
+			"from": "pier",
+			"to": "hideout",
+			"entry": "hideout_pier",
+			"requires_flag": "clue"
+		},
+		"hideout_to_pier": {
+			"from": "hideout",
+			"to": "pier",
+			"entry": "pier_landing"
+		}
+	}
+}

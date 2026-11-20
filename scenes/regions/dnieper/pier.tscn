@@ -1,0 +1,14 @@
+[gd_scene format=3]
+
+[node name="Pier" type="Node3D"]
+metadata/caption = "Каневская пристань"
+metadata/ground = Color(0.5020, 0.5725, 0.4157, 1)
+
+[node name="default" type="Marker3D" parent="."]
+position = Vector3(-5, 0.45, 0)
+
+[node name="pier_landing" type="Marker3D" parent="."]
+position = Vector3(5, 0.45, 0)
+
+[node name="pier_hideout" type="Marker3D" parent="."]
+position = Vector3(5, 0.45, 3)
