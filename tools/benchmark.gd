@@ -8,8 +8,11 @@ func _initialize() -> void:
 
 func _run() -> void:
 	var duration := DEFAULT_SECONDS
+	var shadows := true
 	for arg: String in OS.get_cmdline_user_args():
-		if arg.begins_with("--seconds="):
+		if arg == "--no-shadows":
+			shadows = false
+		elif arg.begins_with("--seconds="):
 			var value := arg.trim_prefix("--seconds=")
 			if not value.is_valid_float() or value.to_float() <= 0.0:
 				push_error("--seconds must be positive")
@@ -22,6 +25,9 @@ func _run() -> void:
 		return
 	var game: Node = scene.instantiate()
 	root.add_child(game)
+	for child: Node in game.world.get_children():
+		if child is DirectionalLight3D:
+			child.shadow_enabled = shadows
 	game.start_button.pressed.emit()
 	var results: Array[Dictionary] = []
 	game._move_party(Vector2i(4, 0))
@@ -59,6 +65,9 @@ func _run() -> void:
 			game._move_party(Vector2i(-5, 2) if game.party[0].position.z < 1 else Vector2i(-5, 0))))
 	print(JSON.stringify({
 		"display": DisplayServer.get_name(),
+		"shadows": shadows,
+		"user_dir_open": DirAccess.open("user://") != null,
+		"shader_cache_exists": DirAccess.dir_exists_absolute("user://shader_cache"),
 		"viewport": [root.size.x, root.size.y],
 		"godot": Engine.get_version_info()["string"],
 		"adapter": RenderingServer.get_video_adapter_name(),
