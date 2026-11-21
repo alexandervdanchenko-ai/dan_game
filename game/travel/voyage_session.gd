@@ -9,12 +9,14 @@ var position: Vector2 = Vector2(2, 4)
 var heading: Vector2 = Vector2.RIGHT
 var opponent_position: Vector2 = Vector2(8, 4)
 var cargo: int
+var has_pilot: bool = false
 var outcome: String = ""
 
 var _crew: Array[String] = []
 var _boarding: bool = false
 
-func _init(active_ids: Array[String], initial_cargo: int = 0) -> void:
+func _init(active_ids: Array[String], initial_cargo: int = 0, pilot: bool = false) -> void:
+	has_pilot = pilot
 	for member_id in active_ids:
 		if not member_id.is_empty() and not member_id in _crew:
 			_crew.append(member_id)
@@ -24,7 +26,7 @@ func steer(direction: Vector2i) -> bool:
 	if not outcome.is_empty() or _boarding or absi(direction.x) + absi(direction.y) != 1:
 		return false
 	var next := Vector2i(position) + direction
-	if not CHANNEL.has_point(next) or is_shallow(next):
+	if not CHANNEL.has_point(next) or (is_shallow(next) and not has_pilot):
 		return false
 	position = Vector2(next)
 	heading = Vector2(direction)

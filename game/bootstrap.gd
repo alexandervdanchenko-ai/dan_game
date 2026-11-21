@@ -526,6 +526,7 @@ func _add_quest_actions() -> void:
 	var choices := {
 		"accept": "Поговорить с купцом о пропавшем судне",
 		"ward": "Попросить у ведуньи оберег",
+		"pilot": "Позвать кормчую в дружину",
 		"note": "Прочитать записку перевозчика",
 		"invoke": "Использовать оберег у воды",
 		"open": "Открыть проход для судов",
@@ -543,6 +544,7 @@ func _choose(choice_id: String) -> void:
 	var reactions := {
 		"accept": "Купец: после тумана к берегу прибило пустое судно. Спроси перевозчика о старом ходе.",
 		"ward": "Ведунья: опусти оберег в воду. Он покажет ход единожды.",
+		"pilot": "Кормчая: это ладья моей семьи. Записку о ходе оставил перевозчик, а брод через мель я проведу сама.",
 		"note": "В записке отмечена тайная стоянка. На неё можно выйти от каневской пристани.",
 		"invoke": "Оберег рассыпался в воде. Огни указали путь к тайной стоянке.",
 		"open": "Ты открыл проход и нашёл железо. Вернись на переправу к старосте.",
@@ -652,7 +654,8 @@ func _begin_voyage() -> void:
 		return
 	if state.flags.get("voyage_complete", false):
 		return
-	voyage = Voyage.new(roster.active_ids(), 1 if state.settlement["buildings"].has("dock") else 0)
+	var pilot: bool = state.flags.get("pilot_joined", false)
+	voyage = Voyage.new(roster.active_ids(), 1 if state.settlement["buildings"].has("dock") else 0, pilot)
 	active_map.hide()
 	river_view = Node3D.new()
 	world.add_child(river_view)
@@ -661,7 +664,8 @@ func _begin_voyage() -> void:
 	_river_box(Vector3(3, 0.2, 0), Vector3(1.7, 0.45, 0.7), Color("#a95e4d"))
 	player_boat = _river_box(Vector3.ZERO, Vector3(1.05, 0.35, 0.62), Color("#e6bc62"))
 	_update_boat()
-	hud_message_text = "Речной патруль впереди. Светлая полоса — мель."
+	hud_message_text = "Речной патруль впереди. Светлая полоса — мель. Кормчая проведёт ладью бродом через неё." if pilot \
+		else "Речной патруль впереди. Светлая полоса — мель, её придётся обходить."
 	_refresh_actions()
 
 func _river_box(at: Vector3, size: Vector3, color: Color) -> MeshInstance3D:

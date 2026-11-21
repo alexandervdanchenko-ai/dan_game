@@ -10,6 +10,7 @@ func _initialize() -> void:
 		_test_navigation(script)
 		_test_boarding(script)
 		_test_other_outcomes(script)
+		_test_pilot(script)
 	if _failures == 0:
 		print("PASS: river navigation, boarding crew and single-award outcomes")
 	quit(1 if _failures > 0 else 0)
@@ -60,6 +61,15 @@ func _test_other_outcomes(script: GDScript) -> void:
 		passing.steer(Vector2i.RIGHT)
 	_require(passing.resolve_encounter("passed") and passing.cargo == 2,
 		"Reaching the far bank preserves cargo")
+
+func _test_pilot(script: GDScript) -> void:
+	var crew: Array[String] = ["hero"]
+	var piloted: RefCounted = script.new(crew, 0, true)
+	_require(piloted.steer(Vector2i.RIGHT) and piloted.steer(Vector2i.RIGHT), "The pilot follows the deep channel")
+	_require(piloted.steer(Vector2i.UP) and piloted.position == Vector2(4, 3), "The pilot crosses the shallow ford")
+	_require(not piloted.steer(Vector2i.UP) or piloted.position.y >= 0, "The pilot stays inside the channel")
+	var without_pilot: RefCounted = script.new(crew, 0)
+	_require(not without_pilot.has_pilot, "A voyage without the pilot is the default")
 
 func _require(condition: bool, failure: String) -> void:
 	if not condition:
